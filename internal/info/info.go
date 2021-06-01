@@ -54,8 +54,12 @@ type Detail struct {
 	GoVersion         string       `json:"go_version,omitempty" yaml:"go_version,omitempty"`
 	GoOS              string       `json:"go_os,omitempty" yaml:"go_os,omitempty"`
 	GoArch            string       `json:"go_arch,omitempty" yaml:"go_arch,omitempty"`
+	GoMaxProcs        string       `json:"go_max_procs,omitempty" yaml:"go_max_procs,omitempty"`
+	GoroutineCount    string       `json:"goroutine_count,omitempty" yaml:"goroutine_count"`
+	CGOCall           string       `json:"cgo_call,omitempty" yaml:"cgo_call"`
 	CGOEnabled        string       `json:"cgo_enabled,omitempty" yaml:"cgo_enabled,omitempty"`
 	NGTVersion        string       `json:"ngt_version,omitempty" yaml:"ngt_version,omitempty"`
+	RuntimeCPUCores   string       `json:"runtime_cpu_cores,omitempty" yaml:"runtime_cpu_cores,omitempty"`
 	BuildCPUInfoFlags []string     `json:"build_cpu_info_flags,omitempty" yaml:"build_cpu_info_flags,omitempty"`
 	StackTrace        []StackTrace `json:"stack_trace,omitempty" yaml:"stack_trace,omitempty"`
 }
@@ -131,6 +135,7 @@ func New(opts ...Option) (Info, error) {
 			GoArch:            GoArch,
 			CGOEnabled:        CGOEnabled,
 			NGTVersion:        NGTVersion,
+			RuntimeCPUCores:   strconv.Itoa(runtime.NumCPU()),
 			BuildCPUInfoFlags: strings.Split(strings.TrimSpace(BuildCPUInfoFlags), " "),
 			StackTrace:        nil,
 		},
@@ -153,18 +158,22 @@ func New(opts ...Option) (Info, error) {
 		return nil, errors.ErrRuntimeFuncNil()
 	}
 
-	i.prepare()
-
 	return i, nil
 }
 
 // String calls String method of global detail object.
 func String() string {
+	if infoProvider == nil {
+		Init(log.Bold("WARNING: uninitialized info provider"))
+	}
 	return infoProvider.String()
 }
 
 // Get calls Get method of global detail object.
 func Get() Detail {
+	if infoProvider == nil {
+		Init(log.Bold("WARNING: uninitialized info provider"))
+	}
 	return infoProvider.Get()
 }
 
@@ -225,6 +234,12 @@ func (d Detail) String() string {
 		if maxlen < l {
 			maxlen = l
 		}
+		switch tag {
+		case "cgo_call":
+			value = strconv.FormatInt(runtime.NumCgoCall(), 10)
+		case "goroutine_count":
+			value = strconv.Itoa(runtime.NumGoroutine())
+		}
 		info[tag] = value
 	}
 
@@ -243,7 +258,6 @@ func (d Detail) String() string {
 func (i info) Get() Detail {
 	i.prepare()
 	defaultURL := fmt.Sprintf("https://%s/tree/%s", valdRepo, i.detail.GitCommit)
-
 	i.detail.StackTrace = make([]StackTrace, 0, 10)
 	for j := 3; ; j++ {
 		pc, file, line, ok := i.rtCaller(j)
@@ -304,6 +318,15 @@ func (i *info) prepare() {
 		}
 		if len(i.detail.GoArch) == 0 {
 			i.detail.GoArch = runtime.GOARCH
+		}
+		if len(i.detail.GoMaxProcs) == 0 {
+			i.detail.GoMaxProcs = strconv.Itoa(runtime.GOMAXPROCS(-1))
+		}
+		if len(i.detail.CGOCall) == 0 {
+			i.detail.CGOCall = strconv.FormatInt(runtime.NumCgoCall(), 10)
+		}
+		if len(i.detail.GoroutineCount) == 0 {
+			i.detail.GoroutineCount = strconv.Itoa(runtime.NumGoroutine())
 		}
 		if len(i.detail.CGOEnabled) == 0 && len(CGOEnabled) != 0 {
 			i.detail.CGOEnabled = CGOEnabled
