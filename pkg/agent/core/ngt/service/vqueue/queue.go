@@ -197,16 +197,9 @@ func (v *vqueue) RangePopInsert(ctx context.Context, f func(uuid string, vector 
 		case <-time.After(time.Millisecond * 100):
 		}
 	}
-	for _, idx := range v.flushAndLoadInsert() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			if !f(idx.uuid, idx.vector) {
-				return
-			}
-		}
-	}
+	v.flushAndLoadInsert(func(uuid string, vector []float32) {
+		f(uuid, vector)
+	})
 }
 
 func (v *vqueue) RangePopDelete(ctx context.Context, f func(uuid string) bool) {
@@ -218,16 +211,9 @@ func (v *vqueue) RangePopDelete(ctx context.Context, f func(uuid string) bool) {
 		case <-time.After(time.Millisecond * 100):
 		}
 	}
-	for _, key := range v.flushAndLoadDelete() {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			if !f(key.uuid) {
-				return
-			}
-		}
-	}
+	v.flushAndLoadDelete(func(uuid string) {
+		f(uuid)
+	})
 }
 
 func (v *vqueue) GetVector(uuid string) ([]float32, bool) {
@@ -290,9 +276,9 @@ func (v *vqueue) addDelete(d key) {
 	v.dmu.Unlock()
 }
 
-func (v *vqueue) flushAndLoadInsert() (uii []index) {
+func (v *vqueue) flushAndLoadInsert(f func(uuid string, vector []float32)) {
 	v.imu.Lock()
-	uii = make([]index, len(v.uii))
+	uii := make([]index, len(v.uii))
 	copy(uii, v.uii)
 	v.uii = v.uii[:0]
 	v.imu.Unlock()
@@ -310,6 +296,8 @@ func (v *vqueue) flushAndLoadInsert() (uii []index) {
 			dl = append(dl, i)
 		} else {
 			dup[idx.uuid] = true
+			v.uiim.Delete(idx.uuid)
+			f(idx.uuid, idx.vector)
 		}
 	}
 	// delete from large index number of slice
@@ -321,12 +309,11 @@ func (v *vqueue) flushAndLoadInsert() (uii []index) {
 	sort.Slice(uii, func(i, j int) bool {
 		return uii[i].date < uii[j].date
 	})
-	return uii
 }
 
-func (v *vqueue) flushAndLoadDelete() (udk []key) {
+func (v *vqueue) flushAndLoadDelete(f func(uuid string)) {
 	v.dmu.Lock()
-	udk = make([]key, len(v.udk))
+	udk := make([]key, len(v.udk))
 	copy(udk, v.udk)
 	v.udk = v.udk[:0]
 	v.dmu.Unlock()
@@ -336,11 +323,12 @@ func (v *vqueue) flushAndLoadDelete() (udk []key) {
 	dup := make(map[string]bool, len(udk)/2)
 	dl := make([]int, 0, len(udk)/2)
 	for i, idx := range udk {
-		v.udim.Delete(idx.uuid)
 		if dup[idx.uuid] {
 			dl = append(dl, i)
 		} else {
 			dup[idx.uuid] = true
+			v.udim.Delete(idx.uuid)
+			f(idx.uuid)
 		}
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(dl)))
