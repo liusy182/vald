@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/vdaas/vald/internal/cache"
 	"github.com/vdaas/vald/internal/errgroup"
 	"github.com/vdaas/vald/internal/errors"
@@ -33,6 +34,7 @@ import (
 	"github.com/vdaas/vald/internal/observability/trace"
 
 	"github.com/vdaas/vald/internal/net/control"
+	"github.com/vdaas/vald/internal/net/quic"
 	"github.com/vdaas/vald/internal/safety"
 	"github.com/vdaas/vald/internal/tls"
 )
@@ -61,6 +63,7 @@ type dialer struct {
 	dialerDualStack       bool
 	addrs                 sync.Map
 	der                   *net.Dialer
+	npDialer              netpoll.Dialer
 	dialer                func(ctx context.Context, network, addr string) (Conn, error)
 	eg                    errgroup.Group
 }
@@ -114,6 +117,8 @@ func NewDialer(opts ...DialerOption) (der Dialer, err error) {
 			return nil
 		},
 	}
+	netpoll.SetLoadBalance(netpoll.RoundRobin)
+	d.npDialer = netpoll.NewDialer()
 
 	d.dialer = d.dial
 
@@ -198,7 +203,7 @@ func (d *dialer) DialContext(ctx context.Context, network, address string) (Conn
 	return d.GetDialer()(ctx, network, address)
 }
 
-func (d *dialer) cachedDialer(dctx context.Context, network, addr string) (conn Conn, err error) {
+func (d *dialer) cachedDialer(ctx context.Context, network, addr string) (conn Conn, err error) {
 	var (
 		host string
 		port string
@@ -230,11 +235,11 @@ func (d *dialer) cachedDialer(dctx context.Context, network, addr string) (conn 
 	}
 
 	if d.dnsCache && !isIP {
-		if dc, err := d.lookup(dctx, host); err == nil {
+		if dc, err := d.lookup(ctx, host); err == nil {
 			for i := uint32(0); i < dc.Len(); i++ {
 				// in this line we use golang's standard net packages net.JoinHostPort cuz port is string type
 				target := net.JoinHostPort(dc.IP(), port)
-				conn, err := d.dial(dctx, network, target)
+				conn, err := d.dial(ctx, network, target)
 				if err == nil && conn != nil {
 					return conn, nil
 				}
@@ -243,7 +248,7 @@ func (d *dialer) cachedDialer(dctx context.Context, network, addr string) (conn 
 			d.cache.Delete(host)
 		}
 	}
-	return d.dial(dctx, network, addr)
+	return d.dial(ctx, network, addr)
 }
 
 func (d *dialer) dial(ctx context.Context, network, addr string) (conn Conn, err error) {
@@ -254,7 +259,14 @@ func (d *dialer) dial(ctx context.Context, network, addr string) (conn Conn, err
 		}
 	}()
 	log.Debugf("%s connection dialing to addr %s", network, addr)
-	conn, err = d.der.DialContext(ctx, network, addr)
+	if IsUDP(network) {
+		conn, err = quic.DialQuicContext(ctx, addr, d.tlsConfig)
+	} else {
+		conn, err = d.npDialer.DialConnection(network, addr, d.der.Timeout)
+		if err != nil {
+			conn, err = d.der.DialContext(ctx, network, addr)
+		}
+	}
 	if err != nil {
 		defer func(conn Conn) {
 			if conn != nil {
@@ -268,7 +280,7 @@ func (d *dialer) dial(ctx context.Context, network, addr string) (conn Conn, err
 		return nil, err
 	}
 
-	if d.tlsConfig != nil {
+	if !IsUDP(network) && d.tlsConfig != nil {
 		return d.tlsHandshake(ctx, conn, addr)
 	}
 	if conn != nil {
