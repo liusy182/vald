@@ -274,11 +274,11 @@ For further details, there are references of Helm values in GitHub Vald reposito
 [vald-helm-chart]: https://github.com/vdaas/vald/tree/master/charts/vald
 [vald-helm-operator-chart]: https://github.com/vdaas/vald/tree/master/charts/vald-helm-operator
 
-[vald-operation-guide]: ./operations.md
+[vald-operation-guide]: ../operations.md
 
 [vald-apis-docs]: https://github.com/vdaas/vald/tree/master/apis/docs
 [vald-swagger-specs]: https://github.com/vdaas/vald/tree/master/apis/swagger
-[logging-level]: https://github.com/vdaas/vald/blob/master/docs/contributing/coding-style.md#logging
+[logging-level]: ../../contributing/coding-style.md#logging
 [google-pprof]: https://github.com/google/pprof
 [prometheus-io]: https://prometheus.io/
 [kubernetes-liveness-readiness]: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
